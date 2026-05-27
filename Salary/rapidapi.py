@@ -69,6 +69,11 @@ SENIORITY_PATTERN = re.compile(r"\b(jr\.?|junior|sr\.?|senior)\b", re.IGNORECASE
 ROMAN_LEVEL_PATTERN = re.compile(r"\b(III|II)\b")
 POWER_BI_PATTERN = re.compile(r"power\s*bi", re.IGNORECASE)
 FAILOVER_STATUS_CODES = {401, 403, 429}
+RATE_LIMIT_EXIT_PER_KEY = 2
+
+
+class AllKeysRateLimited(RuntimeError):
+    """Every API key in the pool returned HTTP 429 at least twice."""
 
 
 @dataclass
@@ -95,6 +100,11 @@ class ApiKeyRotator:
 
     def key_indices_for_attempt(self, start: int) -> list[int]:
         return [(start + offset) % len(self.keys) for offset in range(len(self.keys))]
+
+    def all_keys_rate_limited_enough(self, threshold: int = RATE_LIMIT_EXIT_PER_KEY) -> bool:
+        return bool(self.keys) and all(
+            self.stats[i].rate_limited >= threshold for i in range(len(self.keys))
+        )
 
 
 def load_api_keys() -> list[str]:
@@ -406,6 +416,14 @@ def collect_salary_data(
                 location_type=location_type,
                 timeout_sec=timeout_sec,
             )
+            if rotator.all_keys_rate_limited_enough():
+                log_key_summary(rotator)
+                logger.error(
+                    "All %d RapidAPI keys hit HTTP 429 at least %d times; stopping.",
+                    len(rotator.keys),
+                    RATE_LIMIT_EXIT_PER_KEY,
+                )
+                raise AllKeysRateLimited()
             if rows:
                 success_queries += 1
                 all_rows.extend(
@@ -555,6 +573,11 @@ if __name__ == "__main__":
                 f"{pre}⚠️ {label} — Finished with status {result} at <t:{ts}:f>"
             )
             sys.exit(1)
+    except AllKeysRateLimited:
+        send_discord_alert(
+            f"{pre}❌ {label} — all keys rate limited (HTTP 429×{RATE_LIMIT_EXIT_PER_KEY}) at <t:{ts}:f>"
+        )
+        sys.exit(1)
     except Exception:
         logger.exception("Script failed.")
         send_discord_alert(f"{pre}❌ {label} failed at <t:{ts}:f>")
