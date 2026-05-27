@@ -178,7 +178,7 @@ def download_object_if_exists(client, bucket: str, key: str, dest: Path) -> bool
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         client.download_file(bucket, key, str(dest))
-        logger.info("Downloaded baseline object from R2.")
+        logger.info("Downloaded baseline from R2 key=%s", key)
         return True
     except ClientError as e:
         code = ""
@@ -187,6 +187,7 @@ def download_object_if_exists(client, bucket: str, key: str, dest: Path) -> bool
         except AttributeError:
             code = ""
         if code in {"404", "NoSuchKey", "NotFound"}:
+            logger.info("R2 object not found (key=%s).", key)
             return False
         logger.warning("Baseline object fetch failed (%s).", type(e).__name__)
         return False

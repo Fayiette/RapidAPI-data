@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -39,10 +38,6 @@ from salary_r2 import (
 )
 
 logger = logging.getLogger("salary.fetch")
-
-SEEDS_DIR = Path(__file__).resolve().parent / "seeds"
-CSV_SEED_NAME = "salary_data.csv.example"
-PARQUET_SEED_NAME = "salary_data.parquet.example"
 
 OUTPUT_COLUMNS = [
     "requested_title",
@@ -284,23 +279,6 @@ def enrich_rows(
     return enriched
 
 
-def seed_file_paths() -> tuple[Path, Path]:
-    return SEEDS_DIR / CSV_SEED_NAME, SEEDS_DIR / PARQUET_SEED_NAME
-
-
-def materialize_seeds_to(csv_path: Path, parquet_path: Path) -> None:
-    csv_seed, parquet_seed = seed_file_paths()
-    if not csv_seed.is_file() or not parquet_seed.is_file():
-        logger.error(
-            "Seed files missing under seeds/. Run: python generate_seeds.py"
-        )
-        sys.exit(1)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(csv_seed, csv_path)
-    shutil.copy(parquet_seed, parquet_path)
-    logger.info("Initialized local outputs from schema seeds.")
-
-
 def load_baseline_dataframe(
     csv_path: Path,
     parquet_path: Path,
@@ -309,14 +287,22 @@ def load_baseline_dataframe(
     key_csv: str,
     key_parquet: str,
 ) -> pd.DataFrame:
-    """Load existing salary data from R2, local files, or schema-only seeds."""
+    """Load baseline from R2 (required for CI) or existing local copies."""
     if download_object_if_exists(client, bucket, key_parquet, parquet_path):
         try:
             df = pd.read_parquet(parquet_path)
             logger.info("Loaded baseline from R2 parquet (%d rows).", len(df))
             return df
         except Exception:
-            logger.warning("Could not read R2 parquet baseline; trying seeds.")
+            logger.warning("Could not read downloaded R2 parquet; trying csv.")
+
+    if download_object_if_exists(client, bucket, key_csv, csv_path):
+        try:
+            df = pd.read_csv(csv_path)
+            logger.info("Loaded baseline from R2 csv (%d rows).", len(df))
+            return df
+        except Exception:
+            logger.warning("Could not read downloaded R2 csv.")
 
     if parquet_path.is_file():
         try:
@@ -326,14 +312,6 @@ def load_baseline_dataframe(
         except Exception:
             logger.warning("Could not read local parquet baseline.")
 
-    if download_object_if_exists(client, bucket, key_csv, csv_path):
-        try:
-            df = pd.read_csv(csv_path)
-            logger.info("Loaded baseline from R2 csv (%d rows).", len(df))
-            return df
-        except Exception:
-            logger.warning("Could not read R2 csv baseline; trying seeds.")
-
     if csv_path.is_file():
         try:
             df = pd.read_csv(csv_path)
@@ -342,8 +320,12 @@ def load_baseline_dataframe(
         except Exception:
             logger.warning("Could not read local csv baseline.")
 
-    materialize_seeds_to(csv_path, parquet_path)
-    return pd.DataFrame(columns=OUTPUT_COLUMNS)
+    logger.error(
+        "Baseline not found in R2. Upload %s and %s under your SALARY_R2_PREFIX, then re-run.",
+        key_parquet,
+        key_csv,
+    )
+    sys.exit(1)
 
 
 def merge_with_baseline(baseline: pd.DataFrame, new_rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -363,6 +345,7 @@ def build_dataframe(all_rows: list[dict[str, Any]]) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
     df = df[OUTPUT_COLUMNS]
+    # Keep one row per monthly snapshot; do not collapse prior months' rows.
     dedupe_cols = [
         "requested_title",
         "requested_location",
@@ -370,6 +353,7 @@ def build_dataframe(all_rows: list[dict[str, Any]]) -> pd.DataFrame:
         "location",
         "publisher_name",
         "salaries_updated_at",
+        "fetched_at_utc",
     ]
     df = df.drop_duplicates(subset=dedupe_cols, keep="first").reset_index(drop=True)
     return df
@@ -495,6 +479,19 @@ def main() -> tuple[str, int, int, int]:
     parquet_basename = env_str("R2_SALARY_PARQUET_KEY", "salary_data.parquet")
     csv_basename = env_str("R2_SALARY_CSV_KEY", csv_basename_from_parquet_key(parquet_basename))
 
+    base = data_dir()
+    csv_path = base / csv_basename
+    parquet_path = base / parquet_basename
+    client, bucket = s3_client()
+    prefix = salary_r2_prefix()
+    key_csv = r2_object_key(prefix, csv_basename)
+    key_parquet = r2_object_key(prefix, parquet_basename)
+    log_r2_object_layout(prefix, csv_basename, parquet_basename)
+
+    baseline = load_baseline_dataframe(
+        csv_path, parquet_path, client, bucket, key_csv, key_parquet
+    )
+
     rotator = ApiKeyRotator(keys=load_api_keys())
     max_queries = env_int("SALARY_MAX_QUERIES_PER_RUN", 0)
     log_quota_plan(roles, locations, len(rotator.keys))
@@ -512,19 +509,6 @@ def main() -> tuple[str, int, int, int]:
         max_queries=max_queries,
     )
     log_key_summary(rotator)
-
-    base = data_dir()
-    csv_path = base / csv_basename
-    parquet_path = base / parquet_basename
-    client, bucket = s3_client()
-    prefix = salary_r2_prefix()
-    key_csv = r2_object_key(prefix, csv_basename)
-    key_parquet = r2_object_key(prefix, parquet_basename)
-    log_r2_object_layout(prefix, csv_basename, parquet_basename)
-
-    baseline = load_baseline_dataframe(
-        csv_path, parquet_path, client, bucket, key_csv, key_parquet
-    )
 
     if success_queries == 0:
         logger.error("All salary queries failed.")
