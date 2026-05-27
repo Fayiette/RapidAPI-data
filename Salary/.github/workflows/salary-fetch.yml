@@ -1,0 +1,68 @@
+name: salary-fetch
+
+on:
+  schedule:
+    # 12:00 UTC on the 27th of each month
+    - cron: '0 12 27 * *'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: Salary
+
+concurrency:
+  group: salary-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-salary-${{ hashFiles('Salary/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-salary-
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run rapidapi.py
+        env:
+          RAPIDAPI_URL: ${{ secrets.SALARY_RAPIDAPI_URL }}
+          RAPIDAPI_HOST: ${{ secrets.SALARY_RAPIDAPI_HOST }}
+          RAPIDAPI_KEYS: ${{ secrets.SALARY_RAPIDAPI_KEYS }}
+          RAPIDAPI_MONTHLY_QUOTA_PER_KEY: ${{ secrets.SALARY_RAPIDAPI_MONTHLY_QUOTA_PER_KEY }}
+          SALARY_ROLE_VARIANTS: ${{ secrets.SALARY_ROLE_VARIANTS }}
+          SALARY_ROLE_FAMILIES: ${{ secrets.SALARY_ROLE_FAMILIES }}
+          SALARY_ROLE_FAMILY_ALIASES: ${{ secrets.SALARY_ROLE_FAMILY_ALIASES }}
+          SALARY_LOCATIONS: ${{ secrets.SALARY_LOCATIONS }}
+          SALARY_LOCATION_TYPE: ${{ secrets.SALARY_LOCATION_TYPE }}
+          SALARY_REQUEST_DELAY_SEC: ${{ secrets.SALARY_REQUEST_DELAY_SEC }}
+          SALARY_REQUEST_TIMEOUT_SEC: ${{ secrets.SALARY_REQUEST_TIMEOUT_SEC }}
+          SALARY_MAX_QUERIES_PER_RUN: ${{ secrets.SALARY_MAX_QUERIES_PER_RUN }}
+          SALARY_R2_PREFIX: ${{ secrets.SALARY_R2_PREFIX }}
+          R2_SALARY_PARQUET_KEY: ${{ secrets.SALARY_R2_PARQUET_KEY }}
+          R2_SALARY_CSV_KEY: ${{ secrets.SALARY_R2_CSV_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+        run: python rapidapi.py
