@@ -1,0 +1,2 @@
+# RapidAPI-data
+[Automation] Salary
