@@ -122,14 +122,17 @@ def r2_prefix() -> str:
     return salary_r2_prefix()
 
 
-def log_r2_object_layout(prefix: str, csv_basename: str, parquet_basename: str) -> None:
-    """Public-safe: prefix and basenames only (no bucket/credentials)."""
-    logger.info(
-        "R2 layout — prefix=%s csv=%s parquet=%s",
-        prefix,
-        r2_object_key(prefix, csv_basename),
-        r2_object_key(prefix, parquet_basename),
-    )
+def log_r2_object_layout(prefix: str) -> None:
+    """Public-safe: prefix only (no object basenames — those come from secrets)."""
+    logger.info("R2 layout configured — prefix=%s", prefix)
+
+
+def resolve_output_keys(parquet_env: str, csv_env: str) -> tuple[str, str]:
+    """Require parquet basename; csv basename optional (derived from parquet stem)."""
+    parquet_key = env_required(parquet_env)
+    csv_raw = (os.getenv(csv_env) or "").strip()
+    csv_key = csv_raw if csv_raw else csv_basename_from_parquet_key(parquet_key)
+    return parquet_key, csv_key
 
 
 def data_dir() -> Path:
@@ -178,7 +181,7 @@ def download_object_if_exists(client, bucket: str, key: str, dest: Path) -> bool
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         client.download_file(bucket, key, str(dest))
-        logger.info("Downloaded baseline from R2 key=%s", key)
+        logger.info("Downloaded object from R2.")
         return True
     except ClientError as e:
         code = ""
@@ -187,7 +190,7 @@ def download_object_if_exists(client, bucket: str, key: str, dest: Path) -> bool
         except AttributeError:
             code = ""
         if code in {"404", "NoSuchKey", "NotFound"}:
-            logger.info("R2 object not found (key=%s).", key)
+            logger.info("R2 object not found.")
             return False
         logger.warning("Baseline object fetch failed (%s).", type(e).__name__)
         return False
