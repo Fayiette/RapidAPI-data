@@ -19,7 +19,6 @@ import requests
 
 from salary_r2 import (
     configure_logging,
-    csv_basename_from_parquet_key,
     data_dir,
     discord_user_prefix,
     download_object_if_exists,
@@ -30,6 +29,7 @@ from salary_r2 import (
     env_str,
     fold_upload_results,
     log_r2_object_layout,
+    resolve_output_keys,
     r2_object_key,
     salary_r2_prefix,
     s3_client,
@@ -331,9 +331,7 @@ def load_baseline_dataframe(
             logger.warning("Could not read local csv baseline.")
 
     logger.error(
-        "Baseline not found in R2. Upload %s and %s under your SALARY_R2_PREFIX, then re-run.",
-        key_parquet,
-        key_csv,
+        "Baseline not found in R2 under configured prefix; upload raw parquet/csv then re-run."
     )
     sys.exit(1)
 
@@ -494,8 +492,9 @@ def main() -> tuple[str, int, int, int]:
     role_families = env_list_required("SALARY_ROLE_FAMILIES")
     role_family_aliases = load_role_family_aliases()
 
-    parquet_basename = env_str("R2_SALARY_PARQUET_KEY", "salary_data.parquet")
-    csv_basename = env_str("R2_SALARY_CSV_KEY", csv_basename_from_parquet_key(parquet_basename))
+    parquet_basename, csv_basename = resolve_output_keys(
+        "R2_SALARY_PARQUET_KEY", "R2_SALARY_CSV_KEY"
+    )
 
     base = data_dir()
     csv_path = base / csv_basename
@@ -504,7 +503,7 @@ def main() -> tuple[str, int, int, int]:
     prefix = salary_r2_prefix()
     key_csv = r2_object_key(prefix, csv_basename)
     key_parquet = r2_object_key(prefix, parquet_basename)
-    log_r2_object_layout(prefix, csv_basename, parquet_basename)
+    log_r2_object_layout(prefix)
 
     baseline = load_baseline_dataframe(
         csv_path, parquet_path, client, bucket, key_csv, key_parquet

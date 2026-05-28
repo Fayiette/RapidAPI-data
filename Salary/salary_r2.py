@@ -122,8 +122,8 @@ def r2_prefix() -> str:
     return salary_r2_prefix()
 
 
-def log_r2_object_layout(prefix: str) -> None:
-    """Public-safe: prefix only (no object basenames — those come from secrets)."""
+def log_r2_object_layout(prefix: str, *_ignored: str) -> None:
+    """Public-safe: prefix only (extra basename args ignored for backward compatibility)."""
     logger.info("R2 layout configured — prefix=%s", prefix)
 
 
