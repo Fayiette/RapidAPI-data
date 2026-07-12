@@ -1,0 +1,65 @@
+name: currency-fetch
+
+on:
+  schedule:
+    - cron: '0 6 1 * *'  # 1st of month, 06:00 UTC
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: Currency
+
+concurrency:
+  group: currency-rates
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-currency-${{ hashFiles('Currency/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-currency-
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run currency rates script
+        env:
+          # Currency-only
+          EXTRA_CURRENCIES: ${{ secrets.EXTRA_CURRENCIES }}
+          EXCHANGERATE_API_KEY: ${{ secrets.EXCHANGERATE_API_KEY }}
+          CURRENCY_R2_PREFIX: ${{ secrets.CURRENCY_R2_PREFIX }}
+          R2_CURRENCY_RATES_PARQUET_KEY: ${{ secrets.R2_CURRENCY_RATES_PARQUET_KEY }}
+          R2_CURRENCY_RATES_CSV_KEY: ${{ secrets.R2_CURRENCY_RATES_CSV_KEY }}
+          # Shared with Salary (same bucket / R2 creds / Discord)
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+        run: python currency_rates.py
+
+      - name: Error notification
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: console.log('Workflow failed - check logs');
