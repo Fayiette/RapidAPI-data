@@ -10,6 +10,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -37,14 +38,13 @@ ISO_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 # Env values redacted from logs and Discord before any output leaves the process.
 _REDACT_ENV_NAMES = (
     "EXCHANGERATE_API_KEY",
+    "CURRENCY_R2_PREFIX",
     "R2_BUCKET",
     "R2_ACCESS_KEY_ID",
     "R2_SECRET_ACCESS_KEY",
     "R2_ENDPOINT",
     "R2_CURRENCY_RATES_CSV_KEY",
     "R2_CURRENCY_RATES_PARQUET_KEY",
-    "CURRENCY_RATES_CSV_PATH",
-    "CURRENCY_RATES_PARQUET_PATH",
     "DISCORD_WEBHOOK_URL",
     "DISCORD_USER_ID",
     "EXTRA_CURRENCIES",
@@ -113,6 +113,39 @@ def parse_extra_currencies(raw: str) -> set[str]:
 def get_target_currencies() -> set[str]:
     extras = parse_extra_currencies(require_env("EXTRA_CURRENCIES"))
     return {BASE_CURRENCY} | extras
+
+
+def r2_object_key(prefix: str, filename: str) -> str:
+    if not prefix:
+        return filename
+    return f"{prefix}/{filename}"
+
+
+def currency_r2_prefix() -> str:
+    """Folder prefix inside the bucket (never bucket root for Currency scripts)."""
+    raw = (os.getenv("CURRENCY_R2_PREFIX") or "").strip().strip("/")
+    if not raw:
+        raise ValueError(
+            "Missing CURRENCY_R2_PREFIX — Currency outputs must not upload to bucket root. "
+            "Set it in dev.env (local) or GitHub prod environment secrets (CI). "
+            "See .env.example."
+        )
+    return raw
+
+
+def resolve_output_basenames() -> tuple[str, str]:
+    """Parquet basename required; csv basename optional (derived from parquet stem)."""
+    parquet_basename = require_env("R2_CURRENCY_RATES_PARQUET_KEY")
+    csv_raw = (os.getenv("R2_CURRENCY_RATES_CSV_KEY") or "").strip()
+    csv_basename = csv_raw if csv_raw else f"{Path(parquet_basename).stem}.csv"
+    return csv_basename, parquet_basename
+
+
+def data_dir() -> Path:
+    override = (os.getenv("CURRENCY_DATA_DIR") or "").strip()
+    base = Path(override).expanduser() if override else Path(__file__).resolve().parent
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 def get_file_hash(path: str) -> str | None:
@@ -282,10 +315,13 @@ def is_ci() -> bool:
 def main() -> str:
     load_local_env()
 
-    csv_path = require_env("CURRENCY_RATES_CSV_PATH")
-    parquet_path = require_env("CURRENCY_RATES_PARQUET_PATH")
-    r2_csv_key = require_env("R2_CURRENCY_RATES_CSV_KEY")
-    r2_parquet_key = require_env("R2_CURRENCY_RATES_PARQUET_KEY")
+    prefix = currency_r2_prefix()
+    csv_basename, parquet_basename = resolve_output_basenames()
+    r2_csv_key = r2_object_key(prefix, csv_basename)
+    r2_parquet_key = r2_object_key(prefix, parquet_basename)
+    work = data_dir()
+    csv_path = str(work / csv_basename)
+    parquet_path = str(work / parquet_basename)
     api_key = require_env("EXCHANGERATE_API_KEY")
 
     targets = get_target_currencies()
