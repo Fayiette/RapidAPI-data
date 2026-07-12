@@ -158,14 +158,15 @@ def get_file_hash(path: str) -> str | None:
     return digest.hexdigest()
 
 
-def send_discord_alert(message: str) -> None:
+def send_discord_alert(message: str, *, mention: bool = False) -> None:
     webhook = (os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
     if not webhook:
         return
-    user_id = (os.getenv("DISCORD_USER_ID") or "").strip()
     content = message
-    if user_id:
-        content = f"<@{user_id}> {message}"
+    if mention:
+        user_id = (os.getenv("DISCORD_USER_ID") or "").strip()
+        if user_id:
+            content = f"<@{user_id}> {message}"
     try:
         response = requests.post(
             webhook,
@@ -371,13 +372,26 @@ if __name__ == "__main__":
     timestamp = int(time.time())
     exit_code = 0
     try:
-        main()
+        result = main()
+        if result == "uploaded":
+            send_discord_alert(
+                f"Currency rates pipeline uploaded new month at <t:{timestamp}:f>"
+            )
+        elif result == "skipped":
+            send_discord_alert(
+                f"Currency rates pipeline skipped (month already captured) at <t:{timestamp}:f>"
+            )
+        elif result == "no-change":
+            send_discord_alert(
+                f"Currency rates pipeline finished with no upload at <t:{timestamp}:f>"
+            )
     except Exception as exc:
         safe_log(f"Currency rates pipeline failed: {exc}")
         send_discord_alert(
             redact_secrets(
                 f"Currency rates pipeline failed at <t:{timestamp}:f>: {exc}"
-            )
+            ),
+            mention=True,
         )
         exit_code = 1
     sys.exit(exit_code)
