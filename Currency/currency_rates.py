@@ -371,19 +371,7 @@ if __name__ == "__main__":
     timestamp = int(time.time())
     exit_code = 0
     try:
-        result = main()
-        if result == "uploaded":
-            send_discord_alert(
-                f"Currency rates pipeline uploaded new month at <t:{timestamp}:f>"
-            )
-        elif result == "skipped":
-            send_discord_alert(
-                f"Currency rates pipeline skipped (month already captured) at <t:{timestamp}:f>"
-            )
-        elif result == "no-change":
-            send_discord_alert(
-                f"Currency rates pipeline finished with no upload at <t:{timestamp}:f>"
-            )
+        main()
     except Exception as exc:
         safe_log(f"Currency rates pipeline failed: {exc}")
         send_discord_alert(
